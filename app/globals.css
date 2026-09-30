@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Variant A/B chart colors — validated via the dataviz skill's
+   validate_palette.js (lightness band, chroma floor, CVD ΔE 24.7, normal-
+   vision ΔE 33.6, contrast ≥3:1 all pass). Used consistently for every A-vs-B
+   visual in the Results dashboard. Never reused for status colors. */
+:root {
+  --variant-a: #2a78d6;
+  --variant-b: #eb6834;
+}
+
+/* Correct mobile viewport-height handling: 100vh on mobile browsers includes
+   space the address bar can occlude; 100dvh tracks the actual visible area. */
+.h-dvh {
+  height: 100dvh;
+}

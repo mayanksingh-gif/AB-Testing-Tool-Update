@@ -1,0 +1,9 @@
+node_modules
+.next
+data/
+.env.local
+*.zip
+AB-testing-tool-handoff (3)/
+data.db
+.DS_Store
+.claude/
