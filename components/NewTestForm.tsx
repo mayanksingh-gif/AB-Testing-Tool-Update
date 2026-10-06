@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { createTestAction, updateTestAction } from "@/lib/actions";
 import { TEST_TEMPLATES, getTemplate } from "@/lib/templates";
+import { POST_TEST_QUESTION_TEMPLATES } from "@/lib/postTestQuestionTemplates";
 import type { Test } from "@/lib/queries";
 import ConfirmResetModal from "./ConfirmResetModal";
 
@@ -25,6 +26,25 @@ export default function NewTestForm({ test }: { test?: Test } = {}) {
   const [pendingFormData, setPendingFormData] = useState<FormData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [postTestQuestion, setPostTestQuestion] = useState(test?.post_test_question ?? "");
+  const [showMoreSuggestions, setShowMoreSuggestions] = useState(false);
+  const postTestQuestionRef = useRef<HTMLTextAreaElement>(null);
+  const VISIBLE_SUGGESTION_COUNT = 4;
+  const visibleSuggestions = showMoreSuggestions
+    ? POST_TEST_QUESTION_TEMPLATES
+    : POST_TEST_QUESTION_TEMPLATES.slice(0, VISIBLE_SUGGESTION_COUNT);
+
+  function applySuggestedQuestion(question: string) {
+    // Replaces the single post-test question field's value; never appends,
+    // so the test always ends up with at most one open-ended question.
+    setPostTestQuestion(question);
+    postTestQuestionRef.current?.focus();
+  }
+
+  function focusCustomQuestion() {
+    setPostTestQuestion("");
+    postTestQuestionRef.current?.focus();
+  }
 
   async function handleEditSubmit(formData: FormData) {
     setPendingFormData(formData);
@@ -241,16 +261,63 @@ export default function NewTestForm({ test }: { test?: Test } = {}) {
 
       <div>
         <label className="block text-sm font-medium text-slate-700">Post-test question (optional)</label>
+
+        <div className="mt-2">
+          <p className="text-xs font-medium text-slate-600">Suggested questions</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {visibleSuggestions.map((suggestion) => (
+              <button
+                key={suggestion.id}
+                type="button"
+                onClick={() => applySuggestedQuestion(suggestion.question)}
+                className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                  postTestQuestion === suggestion.question
+                    ? "border-slate-900 bg-slate-900 text-white"
+                    : "border-slate-300 bg-white text-slate-700 hover:border-slate-400"
+                }`}
+              >
+                {suggestion.label}
+              </button>
+            ))}
+            {!showMoreSuggestions && (
+              <button
+                type="button"
+                onClick={() => setShowMoreSuggestions(true)}
+                className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:border-slate-400"
+              >
+                More
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={focusCustomQuestion}
+              className="rounded-full border border-dashed border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-500 hover:border-slate-400"
+            >
+              Custom question
+            </button>
+            <button
+              type="button"
+              onClick={() => setPostTestQuestion("")}
+              className="rounded-full border border-dashed border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-500 hover:border-slate-400"
+            >
+              No post-test question
+            </button>
+          </div>
+        </div>
+
+        <label className="mt-3 block text-xs font-medium text-slate-600">Question</label>
         <textarea
+          ref={postTestQuestionRef}
           name="post_test_question"
           rows={2}
-          defaultValue={test?.post_test_question ?? ""}
+          value={postTestQuestion}
+          onChange={(e) => setPostTestQuestion(e.target.value)}
           placeholder="What, if anything, made this task difficult?"
           className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-slate-500 focus:outline-none"
         />
         <p className="mt-1 text-xs text-slate-500">
           If set, participants see this as a text question right after finishing the task, before the thank-you
-          screen. Leave blank to skip straight to thank-you, as before.
+          screen. Leave blank — &ldquo;No post-test question&rdquo; — to skip straight to thank-you, as before.
         </p>
       </div>
 

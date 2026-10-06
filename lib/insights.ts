@@ -41,7 +41,12 @@ export function generateInsights(
   sessionsA: Session[],
   sessionsB: Session[],
   eventsA: EventRow[],
-  eventsB: EventRow[]
+  eventsB: EventRow[],
+  // Optional — resolves a raw node ID to a human-readable screen name for
+  // insight text. Omitted by default so any other caller's output is
+  // unchanged; the A/B results page passes one built from resolved Figma
+  // node names (falling back to "Screen N").
+  nodeLabel?: (nodeId: string, variant: "A" | "B") => string
 ): Insight[] {
   const insights: Insight[] = [];
 
@@ -140,8 +145,9 @@ export function generateInsights(
     for (const node of common.path) seen.set(node, (seen.get(node) ?? 0) + 1);
     const repeated = [...seen.entries()].find(([, count]) => count >= 2);
     if (repeated && sessions.length >= 3) {
+      const screenName = nodeLabel ? nodeLabel(repeated[0], label) : repeated[0];
       insights.push({
-        observation: `In Variant ${label}'s most common path, screen "${repeated[0]}" was visited ${repeated[1]} times before the task ended.`,
+        observation: `In Variant ${label}'s most common path, screen "${screenName}" was visited ${repeated[1]} times before the task ended.`,
         explanation: `Visiting the same screen multiple times within a single path may indicate that screen isn't sufficiently discoverable or clear on the first pass.`,
         action: `Test whether a stronger call-to-action or clearer hierarchy on that screen reduces repeat visits.`,
         priority: priorityFor(sessions.length, repeated[1] / common.path.length, false),

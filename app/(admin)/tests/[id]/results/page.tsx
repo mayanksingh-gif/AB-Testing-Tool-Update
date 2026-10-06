@@ -15,9 +15,12 @@ import {
   mostCommonPath,
   averageBacktrackingFrequency,
   interactionDistribution,
-  timePerScreen,
+  screenTimeStats,
+  collectPresentedNodeIds,
 } from "@/lib/metrics";
 import { generateInsights } from "@/lib/insights";
+import { extractFileKey } from "@/lib/figma";
+import { resolveFigmaNodeNames } from "@/lib/figma-node-names";
 import CopyLinkButton from "@/components/CopyLinkButton";
 import SessionList from "@/components/SessionList";
 import ResultsFilters from "@/components/results/ResultsFilters";
@@ -26,6 +29,7 @@ import ProgressBar from "@/components/results/ProgressBar";
 import StatTile from "@/components/results/StatTile";
 import PathVisualization from "@/components/results/PathVisualization";
 import InteractionDistribution from "@/components/results/InteractionDistribution";
+import ScreenTimeSection from "@/components/results/ScreenTimeSection";
 import InsightsSection from "@/components/results/InsightsSection";
 import FeedbackSection from "@/components/results/FeedbackSection";
 import AiInsightsSection from "@/components/results/AiInsightsSection";
@@ -52,7 +56,7 @@ function applyFilters(
   return { sessions: filteredSessions, events: filteredEvents };
 }
 
-export default function ResultsPage({
+export default async function ResultsPage({
   params,
   searchParams,
 }: {
@@ -62,6 +66,19 @@ export default function ResultsPage({
   const { test, sessionsA, sessionsB, eventsA, eventsB } = getResultsForTest(params.id);
   if (!test) notFound();
   const abResponses = listAbResponsesForTest(test.id);
+
+  // Resolve Figma node IDs -> human-readable screen names for display only.
+  // Tracking/analytics below continue to key everything off the raw node
+  // ID; these maps are purely a UI label layer, with "Screen N" fallbacks
+  // when a name can't be resolved (see lib/figma-node-names.ts).
+  const fileKeyA = extractFileKey(test.figma_url_a);
+  const fileKeyB = extractFileKey(test.figma_url_b);
+  const nodeIdsA = collectPresentedNodeIds(eventsA, sessionsA);
+  const nodeIdsB = collectPresentedNodeIds(eventsB, sessionsB);
+  const [labelsA, labelsB] = await Promise.all([
+    resolveFigmaNodeNames(fileKeyA, nodeIdsA),
+    resolveFigmaNodeNames(fileKeyB, nodeIdsB),
+  ]);
 
   const variantFilter = searchParams.variant ?? "all";
   const deviceFilter = searchParams.device ?? "all";
@@ -90,8 +107,11 @@ export default function ResultsPage({
   const distributionA = interactionDistribution(filteredA.events);
   const distributionB = interactionDistribution(filteredB.events);
 
-  const screenTimeA = timePerScreen(filteredA.events, filteredA.sessions.map((s) => s.id));
-  const screenTimeB = timePerScreen(filteredB.events, filteredB.sessions.map((s) => s.id));
+  const screenTimeA = screenTimeStats(filteredA.events, filteredA.sessions);
+  const screenTimeB = screenTimeStats(filteredB.events, filteredB.sessions);
+
+  const nodeLabel = (nodeId: string, variant: "A" | "B") =>
+    (variant === "A" ? labelsA : labelsB).get(nodeId) ?? nodeId;
 
   // Insights are always computed on the unfiltered A/B data — mixing
   // filtered subsets in and out would make "affected participants" counts
@@ -102,7 +122,8 @@ export default function ResultsPage({
     sessionsA,
     sessionsB,
     eventsA,
-    eventsB
+    eventsB,
+    nodeLabel
   );
 
   return (
@@ -231,7 +252,7 @@ export default function ResultsPage({
               </h4>
               {commonPathA ? (
                 <>
-                  <PathVisualization path={commonPathA.path} />
+                  <PathVisualization path={commonPathA.path} labels={labelsA} />
                   <p className="mt-2 text-xs text-slate-400">
                     Seen in {commonPathA.count} of {filteredA.sessions.length} sessions.
                   </p>
@@ -248,7 +269,7 @@ export default function ResultsPage({
               </h4>
               {commonPathB ? (
                 <>
-                  <PathVisualization path={commonPathB.path} />
+                  <PathVisualization path={commonPathB.path} labels={labelsB} />
                   <p className="mt-2 text-xs text-slate-400">
                     Seen in {commonPathB.count} of {filteredB.sessions.length} sessions.
                   </p>
@@ -273,7 +294,7 @@ export default function ResultsPage({
               <h4 className="mb-2 text-sm font-semibold" style={{ color: COLOR_A }}>
                 Variant A
               </h4>
-              <InteractionDistribution data={distributionA} color={COLOR_A} />
+              <InteractionDistribution data={distributionA} color={COLOR_A} labels={labelsA} />
             </div>
           )}
           {showB && (
@@ -281,7 +302,7 @@ export default function ResultsPage({
               <h4 className="mb-2 text-sm font-semibold" style={{ color: COLOR_B }}>
                 Variant B
               </h4>
-              <InteractionDistribution data={distributionB} color={COLOR_B} />
+              <InteractionDistribution data={distributionB} color={COLOR_B} labels={labelsB} />
             </div>
           )}
         </div>
@@ -299,44 +320,23 @@ export default function ResultsPage({
           />
           <StatTile label="Median completion time" a={fmtMs(metricsA.medianDurationMs)} b={fmtMs(metricsB.medianDurationMs)} sampleA={metricsA.participants} sampleB={metricsB.participants} />
         </div>
-        <h4 className="mb-2 mt-4 text-sm font-semibold text-slate-900">Time spent per screen (where derivable)</h4>
+      </Section>
+
+      {/* 5b. Time Spent Per Screen */}
+      <Section title="Time Spent Per Screen">
         <p className="mb-3 text-xs text-slate-500">
-          Longer dwell time on a screen before moving to the next one may indicate a point where participants hesitate.
+          Median time is used as the primary metric so a few unusually slow sessions don&rsquo;t distort the ranking; average is shown as secondary context.
         </p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {showA && (
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <h5 className="mb-2 text-xs font-semibold" style={{ color: COLOR_A }}>
-                Variant A
-              </h5>
-              {screenTimeA.length > 0 ? (
-                <InteractionDistribution
-                  data={screenTimeA.map((s) => ({ nodeId: s.nodeId, count: Math.round(s.avgMs / 1000) }))}
-                  color={COLOR_A}
-                />
-              ) : (
-                <p className="text-xs text-slate-400">Not enough multi-screen sessions yet.</p>
-              )}
-              {screenTimeA.length > 0 && <p className="mt-1 text-[11px] text-slate-400">Values are average seconds spent before moving on.</p>}
-            </div>
-          )}
-          {showB && (
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-              <h5 className="mb-2 text-xs font-semibold" style={{ color: COLOR_B }}>
-                Variant B
-              </h5>
-              {screenTimeB.length > 0 ? (
-                <InteractionDistribution
-                  data={screenTimeB.map((s) => ({ nodeId: s.nodeId, count: Math.round(s.avgMs / 1000) }))}
-                  color={COLOR_B}
-                />
-              ) : (
-                <p className="text-xs text-slate-400">Not enough multi-screen sessions yet.</p>
-              )}
-              {screenTimeB.length > 0 && <p className="mt-1 text-[11px] text-slate-400">Values are average seconds spent before moving on.</p>}
-            </div>
-          )}
-        </div>
+        <ScreenTimeSection
+          statsA={screenTimeA}
+          statsB={screenTimeB}
+          labelsA={labelsA}
+          labelsB={labelsB}
+          participantsA={filteredA.sessions.length}
+          participantsB={filteredB.sessions.length}
+          colorA={COLOR_A}
+          colorB={COLOR_B}
+        />
       </Section>
 
       {/* 6. Actionable Insights */}
@@ -357,8 +357,8 @@ export default function ResultsPage({
       {/* 7. Individual Sessions */}
       <Section title="Individual Sessions">
         <div className="space-y-8">
-          {showA && <SessionList title="Variant A Sessions" sessions={filteredA.sessions} events={filteredA.events} />}
-          {showB && <SessionList title="Variant B Sessions" sessions={filteredB.sessions} events={filteredB.events} />}
+          {showA && <SessionList title="Variant A Sessions" sessions={filteredA.sessions} events={filteredA.events} labels={labelsA} />}
+          {showB && <SessionList title="Variant B Sessions" sessions={filteredB.sessions} events={filteredB.events} labels={labelsB} />}
         </div>
       </Section>
     </main>

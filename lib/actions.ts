@@ -4,8 +4,9 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import * as db from "./queries";
 import type { DeviceType, Variant } from "./queries";
-import { parseSuccessLink } from "./figma";
-import { computeVariantMetrics } from "./metrics";
+import { parseSuccessLink, extractFileKey } from "./figma";
+import { resolveFigmaNodeNames } from "./figma-node-names";
+import { computeVariantMetrics, collectPresentedNodeIds } from "./metrics";
 import { generateInsights } from "./insights";
 import { buildAbInsightsPayload, generateInsightsReport } from "./ai-insights";
 
@@ -159,7 +160,23 @@ export async function generateAbInsightsAction(testId: string) {
 
   const metricsA = computeVariantMetrics(sessionsA, eventsA);
   const metricsB = computeVariantMetrics(sessionsB, eventsB);
-  const ruleBasedInsights = generateInsights(metricsA, metricsB, sessionsA, sessionsB, eventsA, eventsB);
+
+  // Resolve node IDs -> screen names so the AI insights payload never
+  // includes raw Figma node IDs, matching the results page's rule-based
+  // insights. Tracking/metrics above are unaffected — this is a label
+  // layer applied only to the text sent to the LLM.
+  const fileKeyA = extractFileKey(test.figma_url_a);
+  const fileKeyB = extractFileKey(test.figma_url_b);
+  const nodeIdsA = collectPresentedNodeIds(eventsA, sessionsA);
+  const nodeIdsB = collectPresentedNodeIds(eventsB, sessionsB);
+  const [labelsA, labelsB] = await Promise.all([
+    resolveFigmaNodeNames(fileKeyA, nodeIdsA),
+    resolveFigmaNodeNames(fileKeyB, nodeIdsB),
+  ]);
+  const nodeLabel = (nodeId: string, variant: "A" | "B") =>
+    (variant === "A" ? labelsA : labelsB).get(nodeId) ?? nodeId;
+
+  const ruleBasedInsights = generateInsights(metricsA, metricsB, sessionsA, sessionsB, eventsA, eventsB, nodeLabel);
   const feedback = db.listAbResponsesForTest(testId);
 
   const payload = buildAbInsightsPayload({

@@ -10,7 +10,7 @@ function fmtMs(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function buildTimeline(session: Session, events: EventRow[]): string[] {
+function buildTimeline(session: Session, events: EventRow[], labels?: Map<string, string>): string[] {
   const sessionEvents = events
     .filter((e) => e.session_id === session.id)
     .sort((a, b) => (a.elapsed_ms ?? 0) - (b.elapsed_ms ?? 0));
@@ -30,9 +30,12 @@ function buildTimeline(session: Session, events: EventRow[]): string[] {
         if (e.handled === 0) label += " (unhandled)";
         seenInteraction = true;
         break;
-      case "PRESENTED_NODE_CHANGED":
-        label = `Frame changed → ${e.presented_node_id ?? "unknown"}`;
+      case "PRESENTED_NODE_CHANGED": {
+        const nodeId = e.presented_node_id ?? "unknown";
+        const screenName = labels?.get(nodeId);
+        label = screenName ? `Frame changed → ${screenName} (${nodeId})` : `Frame changed → ${nodeId}`;
         break;
+      }
       case "NEW_STATE":
         label = "State changed";
         break;
@@ -53,10 +56,12 @@ export default function SessionList({
   title,
   sessions,
   events,
+  labels,
 }: {
   title: string;
   sessions: Session[];
   events: EventRow[];
+  labels?: Map<string, string>;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -88,12 +93,16 @@ export default function SessionList({
                   <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 text-xs">
                     <div className="mb-2">
                       <div className="mb-1 font-semibold text-slate-700">Navigation path</div>
-                      {path.length > 0 ? <PathVisualization path={path} /> : <div className="text-slate-600">—</div>}
+                      {path.length > 0 ? (
+                        <PathVisualization path={path} labels={labels} />
+                      ) : (
+                        <div className="text-slate-600">—</div>
+                      )}
                     </div>
                     <div>
                       <div className="mb-1 font-semibold text-slate-700">Timeline</div>
                       <div className="space-y-0.5 text-slate-600">
-                        {buildTimeline(s, events).map((line, i) => (
+                        {buildTimeline(s, events, labels).map((line, i) => (
                           <div key={i}>{line}</div>
                         ))}
                       </div>

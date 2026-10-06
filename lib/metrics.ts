@@ -81,6 +81,22 @@ export function navigationPath(events: EventRow[], sessionId: string): string[] 
     .map((e) => e.presented_node_id ?? "unknown");
 }
 
+// Every screen actually presented to a participant, across all of a
+// variant's sessions, in true chronological order (sorted per-session by
+// elapsed_ms, sessions concatenated in the order given) — the correct input
+// for figma-node-names.ts's fallback numbering. Click targets
+// (target_node_id) are never included: those are sub-elements a click
+// landed on, not distinct screens, and mixing them in is what caused
+// scrambled/duplicate "Screen N" numbering.
+export function collectPresentedNodeIds(events: EventRow[], sessions: Session[]): string[] {
+  const ids: string[] = [];
+  for (const session of sessions) {
+    const path = navigationPath(events, session.id); // already sorted by elapsed_ms
+    ids.push(...path);
+  }
+  return ids;
+}
+
 export function interactionCount(events: EventRow[], sessionId: string): number {
   return events.filter((e) => e.session_id === sessionId && e.event_type === "MOUSE_PRESS_OR_RELEASE").length;
 }
@@ -188,6 +204,86 @@ export function timePerScreen(events: EventRow[], sessionIds: string[]): ScreenT
     .map(([nodeId, { totalMs, visits }]) => ({ nodeId, avgMs: totalMs / visits, visits }))
     .sort((a, b) => b.avgMs - a.avgMs);
 }
+
+export interface ScreenTimeStat {
+  nodeId: string;
+  visitDurationsMs: number[]; // one entry per visit, across all sessions
+  totalMs: number;
+  visits: number;
+  sessionsVisited: number; // distinct sessions that visited this node at least once
+  revisitSessions: number; // sessions that visited it more than once
+}
+
+// Accurate time-per-screen: for each session, the dwell time on a screen is
+// the gap until the next PRESENTED_NODE_CHANGED event, except for the final
+// screen of a *completed* session, whose exit boundary is the session's
+// recorded completion (duration_ms) rather than being dropped. Revisits to
+// the same node accumulate into the same entry — they never overwrite an
+// earlier visit's duration.
+export function screenTimeStats(events: EventRow[], sessions: Session[]): ScreenTimeStat[] {
+  const stats = new Map<string, ScreenTimeStat>();
+
+  for (const session of sessions) {
+    const changes = events
+      .filter((e) => e.session_id === session.id && e.event_type === "PRESENTED_NODE_CHANGED")
+      .sort((a, b) => (a.elapsed_ms ?? 0) - (b.elapsed_ms ?? 0));
+    if (changes.length === 0) continue;
+
+    const visitedInSession = new Set<string>();
+    for (let i = 0; i < changes.length; i++) {
+      const nodeId = changes[i].presented_node_id ?? "unknown";
+      const entryMs = changes[i].elapsed_ms ?? 0;
+
+      let exitMs: number | null;
+      if (i < changes.length - 1) {
+        exitMs = changes[i + 1].elapsed_ms ?? entryMs;
+      } else if (session.status === "completed" && session.duration_ms != null) {
+        exitMs = session.duration_ms;
+      } else {
+        exitMs = null; // still in progress / abandoned — no known exit time for the last screen
+      }
+
+      if (exitMs == null) continue;
+      const dwellMs = exitMs - entryMs;
+      if (dwellMs < 0) continue;
+
+      const entry = stats.get(nodeId) ?? {
+        nodeId,
+        visitDurationsMs: [],
+        totalMs: 0,
+        visits: 0,
+        sessionsVisited: 0,
+        revisitSessions: 0,
+      };
+      entry.visitDurationsMs.push(dwellMs);
+      entry.totalMs += dwellMs;
+      entry.visits += 1;
+      stats.set(nodeId, entry);
+      visitedInSession.add(nodeId);
+    }
+
+    // Session-level visited/revisited counts, based on how many times this
+    // session visited each node (not just whether a dwell time was derived).
+    const visitsPerNodeThisSession = new Map<string, number>();
+    for (const c of changes) {
+      const nodeId = c.presented_node_id ?? "unknown";
+      visitsPerNodeThisSession.set(nodeId, (visitsPerNodeThisSession.get(nodeId) ?? 0) + 1);
+    }
+    for (const [nodeId, count] of visitsPerNodeThisSession) {
+      const entry = stats.get(nodeId);
+      if (!entry) continue; // no dwell time could be derived for this node in this session
+      entry.sessionsVisited += 1;
+      if (count > 1) entry.revisitSessions += 1;
+    }
+  }
+
+  return [...stats.values()].sort((a, b) => (median(b.visitDurationsMs) ?? 0) - (median(a.visitDurationsMs) ?? 0));
+}
+
+// Exposed so the results page/components can compute median/average dwell
+// time from a ScreenTimeStat's visitDurationsMs without re-implementing it.
+export const medianOf = median;
+export const averageOf = average;
 
 export function fmtMs(ms: number | null): string {
   if (ms == null) return "—";

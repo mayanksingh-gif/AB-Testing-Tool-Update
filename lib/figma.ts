@@ -65,6 +65,20 @@ export function parseSuccessLink(input: string): string | null {
   return null;
 }
 
+// Extracts the file key from a Figma proto/design URL, e.g.
+// https://www.figma.com/proto/abc123/My-Prototype?node-id=1-2 -> "abc123"
+// Used only to resolve node names via the Figma REST API — never for
+// participant tracking or embedding.
+export function extractFileKey(figmaUrl: string): string | null {
+  try {
+    const url = new URL(figmaUrl.trim());
+    const match = url.pathname.match(/\/(?:proto|design|file)\/([^/]+)/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 // Validates that a string is a well-formed Figma URL (any figma.com host —
 // proto/design/file links are all accepted, since the two mandatory usability
 // step fields just need "this is a real Figma link", not a specific path

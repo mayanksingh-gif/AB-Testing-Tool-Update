@@ -1,5 +1,4 @@
 import { Playfair_Display } from "next/font/google";
-import AdminSidebar from "@/components/AdminSidebar";
 
 // Serif headline font for the researcher-facing dashboard only — exposed as
 // a CSS variable so tailwind.config.js's `font-serif-display` utility can
@@ -13,15 +12,10 @@ const serifDisplay = Playfair_Display({
   display: "swap",
 });
 
-// Persistent left-nav chrome for every researcher-facing page (dashboard,
-// test/study builders, results). Participant-facing routes live outside
-// app/(admin) and never render this — route groups are transparent to the
-// URL, so /tests/[id] etc. keep their existing paths.
+// No persistent left-nav rail here — removed per feedback: with the
+// dashboard's two "create a new study" cards already covering A/B vs.
+// Usability, a sidebar duplicating those same two links added no value.
+// Still scopes the serif font to every researcher-facing page.
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className={`${serifDisplay.variable} flex min-h-dvh w-full`}>
-      <AdminSidebar />
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
-  );
+  return <div className={serifDisplay.variable}>{children}</div>;
 }

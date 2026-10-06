@@ -459,3 +459,67 @@ export function upsertAiInsightsCache(
   ).run(id, subjectType, subjectId, reportJson);
   return getCachedAiInsights(subjectType, subjectId) as AiInsightsCacheRow;
 }
+
+// ---------- Figma node name cache (A/B results UI only) ----------
+
+export interface FigmaNodeCacheRow {
+  id: string;
+  file_key: string;
+  node_id: string;
+  node_name: string | null;
+  fallback_name: string | null;
+  last_resolved_at: string;
+}
+
+export function getFigmaNodeCache(fileKey: string, nodeIds: string[]): FigmaNodeCacheRow[] {
+  if (nodeIds.length === 0) return [];
+  const placeholders = nodeIds.map(() => "?").join(", ");
+  return toPlainAll(
+    getDb()
+      .prepare(`SELECT * FROM figma_nodes WHERE file_key = ? AND node_id IN (${placeholders})`)
+      .all(fileKey, ...nodeIds) as unknown as FigmaNodeCacheRow[]
+  );
+}
+
+export function upsertFigmaNodeName(fileKey: string, nodeId: string, nodeName: string): void {
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT id FROM figma_nodes WHERE file_key = ? AND node_id = ?`)
+    .get(fileKey, nodeId) as { id: string } | undefined;
+  if (existing) {
+    db.prepare(
+      `UPDATE figma_nodes SET node_name = ?, last_resolved_at = datetime('now') WHERE id = ?`
+    ).run(nodeName, existing.id);
+    return;
+  }
+  db.prepare(
+    `INSERT INTO figma_nodes (id, file_key, node_id, node_name) VALUES (?, ?, ?, ?)`
+  ).run(randomUUID(), fileKey, nodeId, nodeName);
+}
+
+// Assigns a permanent "Screen N" label the first time a node needs one,
+// numbered by how many fallback names already exist for this file — so
+// numbering is stable and consistent across renders/sessions once assigned.
+export function assignFigmaFallbackName(fileKey: string, nodeId: string): string {
+  const db = getDb();
+  const existing = db
+    .prepare(`SELECT id, fallback_name FROM figma_nodes WHERE file_key = ? AND node_id = ?`)
+    .get(fileKey, nodeId) as { id: string; fallback_name: string | null } | undefined;
+  if (existing?.fallback_name) return existing.fallback_name;
+
+  const { count } = db
+    .prepare(`SELECT COUNT(*) as count FROM figma_nodes WHERE file_key = ? AND fallback_name IS NOT NULL`)
+    .get(fileKey) as { count: number };
+  const fallbackName = `Screen ${count + 1}`;
+
+  if (existing) {
+    db.prepare(
+      `UPDATE figma_nodes SET fallback_name = ?, last_resolved_at = datetime('now') WHERE id = ?`
+    ).run(fallbackName, existing.id);
+  } else {
+    db.prepare(
+      `INSERT INTO figma_nodes (id, file_key, node_id, fallback_name) VALUES (?, ?, ?, ?)`
+    ).run(randomUUID(), fileKey, nodeId, fallbackName);
+  }
+  return fallbackName;
+}

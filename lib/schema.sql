@@ -177,3 +177,20 @@ CREATE TABLE IF NOT EXISTS ai_insights_cache (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_insights_cache_subject ON ai_insights_cache(subject_type, subject_id);
+
+-- ---------- Figma node name cache (A/B results UI only) ----------
+-- Resolved once via the Figma REST API (or assigned a "Screen N" fallback)
+-- and reused thereafter, so the dashboard never re-fetches metadata for a
+-- node it has already resolved. Purely a display-layer cache — tracking and
+-- analytics continue to key everything off the raw node ID.
+
+CREATE TABLE IF NOT EXISTS figma_nodes (
+  id TEXT PRIMARY KEY,
+  file_key TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  node_name TEXT,
+  fallback_name TEXT,
+  last_resolved_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_figma_nodes_file_node ON figma_nodes(file_key, node_id);
